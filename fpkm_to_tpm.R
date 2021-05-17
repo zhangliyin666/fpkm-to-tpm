@@ -1,10 +1,12 @@
+setwd("/home/data/vip9t07/livercan")
 #read data
-data <- read.csv("fpkm(2).csv",header = T)
-colnames(data) <- c("gene_id",	"hu_con_4",	"hu_con_5",	"lung_1",	"lung_2",	"gene_name","gene_chr",	"gene_start",	"gene_end",	"gene_strand",	"gene_length",	"gene_biotype",	"gene_description",	"tf_family")
+data <- read.csv("liver_fpkm.csv",header = T )
+#colnames(data) <- c("gene_id",	"hu_con_4",	"hu_con_5",	"lung_1",	"lung_2",	"gene_name","gene_chr",	"gene_start",	"gene_end",	"gene_strand",	"gene_length",	"gene_biotype",	"gene_description",	"tf_family")
 #data <- filter(data,!duplicated(data$gene_name))
-data <- data[!duplicated(data$gene_name),]##to remove duplicated values
+#data <- data[!duplicated(data$gene_name),]##to remove duplicated values
 #mean data according to duplicated rows
-data1 <- data[,2:10]
+data1 <- data[,c(2:19)]
+library(dplyr)
 data1 <- data1 %>%
   group_by(gene_name) %>%
   summarise_all(mean)
@@ -23,21 +25,32 @@ fpkmToTpm <- function(fpkm)
 tpms <- apply(expMatrix,2,fpkmToTpm)
 tpms[1:3,]
 colSums(tpms)
+#write.csv(tpms,file = "liver_exprset.csv")
 
 #differential analysis
 #to assign order
-group_list=c(rep('cirrhosis',4),rep('normal',4))
-group_list <- factor(group_list,levels = c("normal","cirrhosis"),ordered = T)#ordered = F means to use last step as order instead of alphabet
-design=model.matrix(~factor( group_list ))
-colnames(design)=levels(group_list)
-rownames(design)=colnames(exprSet)
-contrast.matrix<-makeContrasts(paste0(unique(group_list),collapse = "-"),levels = design)
-contrast.matrix
-
-#data correction
+library(limma)
 exprSet <- tpms
+expr <- exprSet[,1:14]
+group_list <- factor(c(rep("ctrl",2),rep("treat",2)), levels = c("ctrl","treat"),ordered = F)
+group_list
+table(group_list)
+################ !!!ATTENTION!!! 2 methods for differential analysis!!!
+# 1. without makecontrast
+design=model.matrix(~factor( group_list ))
+fit=lmFit(dat,design)
+fit=eBayes(fit)
+options(digits = 4)
+topTable(fit,coef=2,adjust='BH')
+# 2. with makecontrast
+design2 <- model.matrix(~0+group_list)
+colnames(design2) = levels(factor(group_list))
+rownames(design2) = colnames(group_list)
+design2
+cont.matrix <- makeContrasts('treat-ctrl', levels = design2)
+cont.matrix
+#data correction
 boxplot(exprSet,outline=FALSE, notch=T,col=group_list, las=2)
-library(limma) 
 exprSet=normalizeBetweenArrays(exprSet)
 boxplot(exprSet,outline=FALSE, notch=T,col=group_list, las=2)
 #to test if data needed transfer
@@ -48,12 +61,14 @@ exprSet <- as.data.frame(exprSet)
 exprSet$id_ref <- rownames(exprSet)
 exprSet <- exprSet[,c(9,1:8)]
 write.table(exprSet,file = "exprset.txt",row.names = F)
-write.csv(exprSet,file = "exprset.csv",row.names = F)
+write.csv(exprSet,file = "exprset.csv")
 ###############
-fit=lmFit(dat,design)
-fit=eBayes(fit)
+fit2=lmFit(dat,design2)
+fit2=contrasts.fit(fit,cont.matrix)
+fit2=eBayes(fit)
 options(digits = 4)
-topTable(fit,coef=2,adjust='BH')
+topTable(fit2,coef=1,adjust='BH')
+# get deg
 bp=function(g){
   library(ggpubr)
   df=data.frame(gene=g,stage=group_list)
@@ -63,11 +78,11 @@ bp=function(g){
   #  Add p-value
   p + stat_compare_means()
 }
-deg=topTable(fit,coef=2,adjust='BH',number = Inf)
+deg=topTable(fit2,coef=2,adjust='BH',number = Inf)
 head(deg) 
 #differential expression genes
 if(T){
-  logFC_t=1.5
+  logFC_t=1
   deg$g=ifelse(deg$P.Value>0.05,'stable',
                ifelse( deg$logFC > logFC_t,'UP',
                        ifelse( deg$logFC < -logFC_t,'DOWN','stable') )
@@ -92,6 +107,7 @@ if(T){
   gene_up= DEG[DEG$g == 'UP','ENTREZID'] 
   gene_down=DEG[DEG$g == 'DOWN','ENTREZID'] 
 }
+write.csv(DEG,file = "TREAT-vs-CONTROL.csv")
 ##GSEA
 gene=data.frame(DEG$symbol,DEG$logFC,stringsAsFactors=FALSE)
 geneID=select(org.Hs.eg.db,keys=DEG$symbol,columns="ENTREZID",keytype="SYMBOL")
@@ -105,10 +121,10 @@ genelist_sort=sort(genelist,decreasing = T)
 head(genelist_sort)
 #by GO
 gse_ALL <- gseGO(genelist_sort,
-               OrgDb = org.Hs.eg.db,
-               keyType = "ENTREZID",
-               ont="ALL",
-               pvalueCutoff = 0.9)
+                 OrgDb = org.Hs.eg.db,
+                 keyType = "ENTREZID",
+                 ont="ALL",
+                 pvalueCutoff = 0.9)
 head(gsemf)
 library(enrichplot)
 gseaplot2(gse_ALL, 1,title = gsemf@result$Description[1],pvalue_table = T)
@@ -116,12 +132,12 @@ gseaplot2(gse_ALL, "GO:0043542",pvalue_table = T)
 write.csv(gse_ALL@result,file = "gse_all_GO.csv")
 #by KEGG
 gse_KEGG <- gseKEGG(genelist_sort ,
-                organism     = 'hsa',
-                nPerm        = 1000,
-                minGSSize    = 10,
-                maxGSSize = 500,
-                pvalueCutoff = 0.9,
-                verbose      = FALSE)
+                    organism     = 'hsa',
+                    nPerm        = 1000,
+                    minGSSize    = 10,
+                    maxGSSize = 500,
+                    pvalueCutoff = 0.9,
+                    verbose      = FALSE)
 gseaplot2(gse_KEGG, "hsa04380",pvalue_table = T)
 write.csv(gse_KEGG@result,file = "gse_all_KEGG.csv")
 
@@ -148,6 +164,37 @@ ego_mf<-enrichGO(gene       = gene.df$SYMBOL,
                  ont        = "MF",
                  pAdjustMethod = "BH",
                  pvalueCutoff = 0.05)
+dotplot(ego_cc,
+        showCategory = 30,
+        title="The GO_CC enrichment analysis of all DEGs ",
+        color = 'pvalue')
+ego_cc@result$qvalue = 0
+ego_cc@result$p.adjust = 0
+
+dotplot(ego_bp,
+        showCategory = 30,
+        title="The GO_BP enrichment analysis of all DEGs ",
+        color = 'pvalue')
+ego_bp@result$qvalue = 0
+ego_bp@result$p.adjust = 0
+
+dotplot(ego_mf,
+        showCategory = 30,
+        title="The GO_MF enrichment analysis of all DEGs ",
+        color = 'pvalue')
+ego_mf@result$qvalue = 0
+ego_mf@result$p.adjust = 0
+
+#KEGG enrich
+kk<-enrichKEGG(gene      =gene.df$ENTREZID,
+               organism = 'hsa',
+               pvalueCutoff = 0.9)
+kk=DOSE::setReadable(kk, OrgDb='org.Hs.eg.db',keyType='ENTREZID')
+kk@result$qvalue = 0
+kk@result$p.adjust = 0
+barplot(kk,showCategory = 30, title="The KEGG enrichment analysis of all DEGs",color = 'pvalue')
+cnetplot(kk,foldChange=gene, circular = TRUE, colorEdge = TRUE)
+emapplot(kk,foldChange=gene, circular = TRUE, colorEdge = TRUE,color = "pvalue")
 
 FC <- DEG$logFC
 names(FC) <- DEG$symbol
@@ -166,15 +213,16 @@ pheatmap(select,show_colnames =F,show_rownames = T,
 
 samples <- rep(c('cirrhosis', 'normal'), c(4, 4))
 heat <- Heatmap(dat, 
-                col = colorRampPalette(c('navy', 'white', 'firebrick3'))(100), #¶¨ÒåÈÈÍ¼ÓÉµÍÖµµ½¸ßÖµµÄ½¥±äÑÕÉ«
-                heatmap_legend_param = list(grid_height = unit(10,'mm')),  #Í¼Àý¸ß¶ÈÉèÖÃ
+                col = colorRampPalette(c('navy', 'white', 'firebrick3'))(100), #å®šä¹‰çƒ­å›¾ç”±ä½Žå€¼åˆ°é«˜å€¼çš„æ¸å˜é¢œè‰²
+                heatmap_legend_param = list(grid_height = unit(10,'mm')),  #å›¾ä¾‹é«˜åº¦è®¾ç½®
                 show_row_names = T,  #not to show gene names
                 top_annotation = HeatmapAnnotation(Group = samples, 
                                                    simple_anno_size = unit(2, 'mm'), 
-                                                   col = list(Group = c('control' = '#00DAE0', 'treat' = '#FF9289')),  # #¶¨ÒåÑù±¾·Ö×éµÄÑÕÉ«
+                                                   col = list(Group = c('control' = '#00DAE0', 'treat' = '#FF9289')),  # #å®šä¹‰æ ·æœ¬åˆ†ç»„çš„é¢œè‰²
                                                    show_annotation_name = FALSE), 
                 column_names_gp = gpar(fontsize = 10), 
                 row_names_gp = gpar(fontsize = 6),
                 cluster_rows = F,
                 cluster_columns = F)
 heat
+
