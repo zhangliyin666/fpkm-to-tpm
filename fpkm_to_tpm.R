@@ -31,24 +31,13 @@ colSums(tpms)
 #to assign order
 library(limma)
 exprSet <- tpms
-expr <- exprSet[,1:14]
-group_list <- factor(c(rep("ctrl",2),rep("treat",2)), levels = c("ctrl","treat"),ordered = F)
+exprSet <- exprSet[,c(1:6,15:17)]
+
+#group
+group_list <- factor(c(rep("ctrl",6),rep("cirrhosis",3)), levels = c("ctrl","cirrhosis"),ordered = F)
 group_list
 table(group_list)
-################ !!!ATTENTION!!! 2 methods for differential analysis!!!
-# 1. without makecontrast
-design=model.matrix(~factor( group_list ))
-fit=lmFit(dat,design)
-fit=eBayes(fit)
-options(digits = 4)
-topTable(fit,coef=2,adjust='BH')
-# 2. with makecontrast
-design2 <- model.matrix(~0+group_list)
-colnames(design2) = levels(factor(group_list))
-rownames(design2) = colnames(group_list)
-design2
-cont.matrix <- makeContrasts('treat-ctrl', levels = design2)
-cont.matrix
+
 #data correction
 boxplot(exprSet,outline=FALSE, notch=T,col=group_list, las=2)
 exprSet=normalizeBetweenArrays(exprSet)
@@ -56,18 +45,28 @@ boxplot(exprSet,outline=FALSE, notch=T,col=group_list, las=2)
 #to test if data needed transfer
 exprSet <- log2(exprSet+1)
 dat <- exprSet
-####output######
-exprSet <- as.data.frame(exprSet)
-exprSet$id_ref <- rownames(exprSet)
-exprSet <- exprSet[,c(9,1:8)]
-write.table(exprSet,file = "exprset.txt",row.names = F)
-write.csv(exprSet,file = "exprset.csv")
-###############
-fit2=lmFit(dat,design2)
-fit2=contrasts.fit(fit,cont.matrix)
-fit2=eBayes(fit)
+
+################ !!!ATTENTION!!! 2 methods for differential analysis!!!
+# 1. without makecontrast
+design=model.matrix(~factor( group_list ))
+fit=lmFit(dat,design)
+fit=eBayes(fit)
 options(digits = 4)
-topTable(fit2,coef=1,adjust='BH')
+topTable(fit,coef=2,adjust='BH')
+deg1 <- topTable(fit,coef=2,adjust='BH',number = Inf)
+# 2. with makecontrast
+design2 <- model.matrix(~0+group_list)
+colnames(design2) = levels(factor(group_list))
+rownames(design2) = colnames(group_list)
+design2
+cont.matrix <- makeContrasts('cirrhosis-ctrl', levels = design2)
+cont.matrix
+fit2=lmFit(dat,design2)
+fit2=contrasts.fit(fit2,cont.matrix)
+fit2=eBayes(fit2)
+options(digits = 4)
+deg2=topTable(fit2,adjust='BH',number = Inf)
+head(deg2) 
 # get deg
 bp=function(g){
   library(ggpubr)
@@ -78,8 +77,7 @@ bp=function(g){
   #  Add p-value
   p + stat_compare_means()
 }
-deg=topTable(fit2,coef=2,adjust='BH',number = Inf)
-head(deg) 
+
 #differential expression genes
 if(T){
   logFC_t=1
@@ -107,7 +105,7 @@ if(T){
   gene_up= DEG[DEG$g == 'UP','ENTREZID'] 
   gene_down=DEG[DEG$g == 'DOWN','ENTREZID'] 
 }
-write.csv(DEG,file = "TREAT-vs-CONTROL.csv")
+write.csv(DEG,file = "NC-vs-CONTROL.csv")
 ##GSEA
 gene=data.frame(DEG$symbol,DEG$logFC,stringsAsFactors=FALSE)
 geneID=select(org.Hs.eg.db,keys=DEG$symbol,columns="ENTREZID",keytype="SYMBOL")
